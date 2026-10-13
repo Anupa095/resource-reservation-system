@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// පරිශීලකයන් (Users)
+model User {
+  id           String        @id @default(uuid())
+  name         String
+  email        String        @unique
+  role         Role          @default(USER) // ADMIN හෝ USER
+  createdAt    DateTime      @default(now())
+  reservations Reservation[]
+}
+
+// සම්පත් (Meeting rooms, Equipment, etc.)
+model Resource {
+  id           String        @id @default(uuid())
+  name         String
+  category     String        // e.g. "Room", "Laptop", "Projector"
+  capacity     Int?          // ධාරිතාව (අවශ්‍ය නම්)
+  location     String?       // ස්ථානය
+  description  String?
+  createdAt    DateTime      @default(now())
+  reservations Reservation[]
+}
+
+// වෙන්කිරීම් (Reservations)
+model Reservation {
+  id         String            @id @default(uuid())
+  userId     String
+  resourceId String
+  startTime  DateTime
+  endTime    DateTime
+  status     ReservationStatus @default(CONFIRMED) // PENDING, CONFIRMED, CANCELLED
+  createdAt  DateTime          @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resource Resource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+}
