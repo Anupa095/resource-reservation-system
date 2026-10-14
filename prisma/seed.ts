@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { getPrismaClient } from "../src/lib/prisma";
-
+//Testing
 const users = [
   { name: "Anupa Perera", email: "anupa@example.com", role: "ADMIN" as const },
   { name: "Kasun Kalhara", email: "kasun@example.com", role: "USER" as const },

@@ -33,11 +33,20 @@ const inputClass =
 
 const labelClass = "block text-sm font-medium text-slate-700";
 
+const DEFAULT_CATEGORIES = ["Room", "Laptop", "Projector", "Vehicle", "Equipment"];
+
 export default function ResourcesPage() {
   const [resources, setResources] = useState<ResourceView[]>([]);
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+
+  const [selectedCategory, setSelectedCategory] = useState("Room");
+  const [customCategory, setCustomCategory] = useState("");
+
+  const categories = Array.from(
+    new Set([...DEFAULT_CATEGORIES, ...resources.map((r) => r.category)])
+  );
 
   async function loadResources() {
     const response = await fetch("/api/resources");
@@ -76,15 +85,31 @@ export default function ResourcesPage() {
     setIsError(false);
     const form = event.currentTarget;
     const values = new FormData(form);
-    const capacityValue = String(values.get("capacity") || "").trim();
+    
+    const finalCategory = selectedCategory === "Other" ? customCategory.trim() : selectedCategory;
+
+    if (!finalCategory) {
+      setIsError(true);
+      setMessage("Please provide a valid category.");
+      return;
+    }
+
+    let finalCapacity: number | null = null;
+    if (selectedCategory === "Room") {
+      finalCapacity = 1;
+    } else {
+      const capVal = String(values.get("capacity") || "").trim();
+      finalCapacity = capVal ? Number(capVal) : null;
+    }
+
     try {
       const response = await fetch("/api/resources", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: values.get("name"),
-          category: values.get("category"),
-          capacity: capacityValue ? Number(capacityValue) : null,
+          category: finalCategory,
+          capacity: finalCapacity,
           location: values.get("location") || null,
           description: values.get("description") || null,
         }),
@@ -99,7 +124,9 @@ export default function ResourcesPage() {
       }
 
       form.reset();
-      setMessage("Resource added.");
+      setSelectedCategory("Room");
+      setCustomCategory("");
+      setMessage("Resource added successfully.");
       await loadResources();
     } catch (error) {
       setIsError(true);
@@ -186,30 +213,55 @@ export default function ResourcesPage() {
                 />
               </div>
 
+              {/* Dynamic Category Dropdown & Other input */}
               <div className="space-y-1.5">
                 <label className={labelClass} htmlFor="resource-category">Category</label>
-                <input
+                <select
                   id="resource-category"
                   name="category"
-                  required
-                  maxLength={80}
-                  placeholder="Room, Laptop..."
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
                   className={inputClass}
-                />
+                >
+                  {categories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                  <option value="Other">Other (Type custom)</option>
+                </select>
+
+                {selectedCategory === "Other" && (
+                  <input
+                    type="text"
+                    required
+                    maxLength={80}
+                    placeholder="Enter custom category..."
+                    value={customCategory}
+                    onChange={(e) => setCustomCategory(e.target.value)}
+                    className={`mt-2 ${inputClass}`}
+                  />
+                )}
               </div>
 
               <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
                 <div className="space-y-1.5">
                   <label className={labelClass} htmlFor="resource-capacity">
-                    Capacity <span className="font-normal text-slate-400">(optional)</span>
+                    Capacity {selectedCategory === "Room" ? "(Fixed to 1 for Rooms)" : "(optional)"}
                   </label>
                   <input
+                    key={selectedCategory}
                     id="resource-capacity"
                     name="capacity"
                     type="number"
                     min="1"
                     step="1"
-                    className={inputClass}
+                    disabled={selectedCategory === "Room"}
+                    defaultValue={selectedCategory === "Room" ? 1 : ""}
+                    placeholder={selectedCategory === "Room" ? "1" : "e.g. 5"}
+                    className={`${inputClass} ${
+                      selectedCategory === "Room" ? "bg-slate-100 text-slate-500 cursor-not-allowed" : ""
+                    }`}
                   />
                 </div>
                 <div className="space-y-1.5">

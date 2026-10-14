@@ -7,15 +7,15 @@ const reservationInput = z.union([
   z.object({
     resourceId: z.string().uuid("Choose a valid resource."),
     userId: z.string().uuid("Choose a valid user."),
-    startTime: z.iso.datetime({ offset: true }),
-    endTime: z.iso.datetime({ offset: true }),
+    startTime: z.string().datetime({ offset: true }),
+    endTime: z.string().datetime({ offset: true }),
   }),
   z.object({
     resourceId: z.string().uuid("Choose a valid resource."),
     name: z.string().trim().min(1, "Name is required.").max(120),
     email: z.string().trim().email("Enter a valid email address.").max(254),
-    startTime: z.iso.datetime({ offset: true }),
-    endTime: z.iso.datetime({ offset: true }),
+    startTime: z.string().datetime({ offset: true }),
+    endTime: z.string().datetime({ offset: true }),
   }),
 ]);
 
@@ -101,24 +101,33 @@ export async function POST(request: Request) {
       async (transaction) => {
         const resource = await transaction.resource.findUnique({
           where: { id: input.data.resourceId },
-          select: { id: true },
+          select: { id: true, category: true, capacity: true },
         });
         if (!resource) {
           throw new ResourceNotFoundError("The selected resource does not exist.");
         }
 
-        const conflictingReservation = await transaction.reservation.findFirst({
+        // Count overlapping reservations for the selected time range
+        const overlappingCount = await transaction.reservation.count({
           where: {
             resourceId: input.data.resourceId,
             status: { not: "CANCELLED" },
             startTime: { lt: endTime },
             endTime: { gt: startTime },
           },
-          select: { id: true },
         });
 
-        if (conflictingReservation) {
-          throw new ReservationConflictError("This resource is already reserved for that time.");
+        // Room condition: Max allowed booking = 1.
+        // Other Categories: Max allowed = capacity || 1.
+        const isRoomCategory = resource.category.trim().toLowerCase() === "room";
+        const maxCapacity = isRoomCategory ? 1 : (resource.capacity ?? 1);
+
+        if (overlappingCount >= maxCapacity) {
+          throw new ReservationConflictError(
+            isRoomCategory
+              ? "This room is already reserved for the selected time slot."
+              : `This resource has reached its maximum booking capacity (${maxCapacity}) for that time period.`
+          );
         }
 
         const user = "userId" in input.data

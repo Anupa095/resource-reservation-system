@@ -46,6 +46,12 @@ const formatDay = (isoDate: string) => new Date(isoDate).toLocaleDateString('en-
 const formatMonth = (isoDate: string) =>
   new Date(isoDate).toLocaleDateString('en-GB', { month: 'short' }).toUpperCase()
 
+// Categories that are booked as a single unit (a room is either free or taken),
+// so their headcount capacity is shown as 1. Add more categories here if needed.
+const SINGLE_UNIT_CATEGORIES = ['room']
+
+const isSingleUnit = (category: string) => SINGLE_UNIT_CATEGORIES.includes(category.trim().toLowerCase())
+
 // Resources with at least this much capacity are treated as bulk stock,
 // so we don't show an availability countdown for them.
 const STOCK_CAPACITY_MIN = 20
@@ -134,6 +140,24 @@ export default function Home() {
     .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
     .slice(0, 5)
 
+  // Reservations that are running right now, ending soonest first
+  const currentReservations = [...reservations]
+    .filter(
+      (reservation) =>
+        currentTime !== null &&
+        reservation.status !== 'CANCELLED' &&
+        new Date(reservation.startTime).getTime() <= currentTime &&
+        new Date(reservation.endTime).getTime() > currentTime
+    )
+    .sort((a, b) => new Date(a.endTime).getTime() - new Date(b.endTime).getTime())
+
+  // Each running reservation takes up one unit of its resource's capacity
+  const currentBookingCounts = new Map<string, number>()
+  currentReservations.forEach((reservation) => {
+    const id = reservation.resource?.id
+    if (id) currentBookingCounts.set(id, (currentBookingCounts.get(id) ?? 0) + 1)
+  })
+
   const currentlyBookedResourceIds = new Set(
     currentTime === null
       ? []
@@ -158,7 +182,7 @@ export default function Home() {
     return starts[0] ?? null
   }
 
-  // End time of the booking that is running right now (null if none)
+  // End time of the earliest-ending booking running right now, i.e. when a unit frees up (null if none)
   const currentBookingEndFor = (resourceId: string): number | null => {
     if (currentTime === null) return null
     const ends = reservations
@@ -170,12 +194,13 @@ export default function Home() {
           new Date(r.endTime).getTime() > currentTime
       )
       .map((r) => new Date(r.endTime).getTime())
-      .sort((a, b) => b - a)
+      .sort((a, b) => a - b)
     return ends[0] ?? null
   }
 
   const resourceAvailability = resources.map((resource) => ({
     ...resource,
+    capacity: isSingleUnit(resource.category) ? 1 : resource.capacity,
     nextBookingStart: nextBookingStartFor(resource.id),
     currentBookingEnd: currentBookingEndFor(resource.id),
     upcomingBookings: reservations.filter((reservation) =>
@@ -184,7 +209,7 @@ export default function Home() {
       new Date(reservation.startTime).getTime() > currentTime
     ).length,
     isInUse: currentlyBookedResourceIds.has(resource.id),
-    bookedCapacity: currentlyBookedResourceIds.has(resource.id) ? 1 : 0,
+    bookedCapacity: currentBookingCounts.get(resource.id) ?? 0,
   }))
 
   const categories = ['All', ...Array.from(new Set(resources.map((r) => r.category).filter(Boolean)))]
@@ -195,7 +220,10 @@ export default function Home() {
 
   const stats = {
     totalResources: resources.length,
-    availableNow: currentTime === null ? null : resources.length - currentlyBookedResourceIds.size,
+    availableNow:
+      currentTime === null
+        ? null
+        : resourceAvailability.filter((r) => r.capacity === null || r.bookedCapacity < r.capacity).length,
     inUseNow: currentTime === null ? null : currentlyBookedResourceIds.size,
     upcoming: upcomingReservations.length,
   }
@@ -321,7 +349,11 @@ export default function Home() {
                         : isAtCapacity
                           ? { text: 'Fully booked', cls: 'bg-red-50 text-red-700', dot: 'bg-red-500' }
                           : res.isInUse
-                            ? { text: 'In use', cls: 'bg-amber-50 text-amber-700', dot: 'bg-amber-500' }
+                            ? {
+                                text: res.capacity === null || res.capacity <= 1 ? 'In use' : 'Partly booked',
+                                cls: 'bg-amber-50 text-amber-700',
+                                dot: 'bg-amber-500',
+                              }
                             : { text: 'Available', cls: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' }
 
                     const barColor = isAtCapacity ? 'bg-red-500' : res.isInUse ? 'bg-amber-500' : 'bg-emerald-500'
@@ -331,8 +363,8 @@ export default function Home() {
                       currentTime === null || isStock
                         ? null
                         : res.isInUse
-                          ? res.currentBookingEnd
-                            ? { text: `Free in ${formatDuration(res.currentBookingEnd - currentTime)}`, cls: 'bg-amber-50 text-amber-700' }
+                          ? (isAtCapacity || res.capacity === null) && res.currentBookingEnd
+                            ? { text: `Next free in ${formatDuration(res.currentBookingEnd - currentTime)}`, cls: 'bg-amber-50 text-amber-700' }
                             : null
                           : res.nextBookingStart === null
                             ? { text: 'Available · no upcoming bookings', cls: 'bg-emerald-50 text-emerald-700' }
@@ -446,6 +478,61 @@ export default function Home() {
                   ))}
                 </ul>
               )}
+            </div>
+
+            {/* Currently booked */}
+            <div className="mt-10">
+              <div className="flex items-end justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">In use right now</h2>
+                  <p className="mt-1 text-sm text-slate-500">Bookings that are currently running.</p>
+                </div>
+                {currentTime !== null && currentReservations.length > 0 && (
+                  <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">
+                    {currentReservations.length} active
+                  </span>
+                )}
+              </div>
+
+              <div className="mt-6 rounded-2xl border border-slate-200 bg-white shadow-sm">
+                {currentTime === null || currentReservations.length === 0 ? (
+                  <p className="p-6 text-center text-sm text-slate-500">Nothing is booked at the moment.</p>
+                ) : (
+                  <ul className="divide-y divide-slate-100">
+                    {currentReservations.map((reservation) => {
+                      const end = new Date(reservation.endTime)
+                      const endsToday = end.toDateString() === new Date(currentTime).toDateString()
+                      return (
+                        <li key={reservation.id} className="flex gap-4 p-4">
+                          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+                            <span className="relative flex h-3 w-3">
+                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-60" />
+                              <span className="relative inline-flex h-3 w-3 rounded-full bg-amber-500" />
+                            </span>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-slate-900">
+                              {reservation.resource?.name}
+                            </p>
+                            <p className="mt-0.5 truncate text-xs text-slate-500">
+                              Booked by {reservation.user?.name}
+                            </p>
+                            <p
+                              className="mt-1.5 text-xs font-medium text-slate-600"
+                              title={`${formatDateTime(reservation.startTime)} → ${formatDateTime(reservation.endTime)}`}
+                            >
+                              Until {endsToday ? formatTime(reservation.endTime) : formatDateTime(reservation.endTime)}
+                              <span className="ml-2 text-amber-700">
+                                · free in {formatDuration(end.getTime() - currentTime)}
+                              </span>
+                            </p>
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </div>
             </div>
           </aside>
         </div>
